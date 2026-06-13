@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { canonicalizePath, getCwdRelativePath, isLocalPath, normalizePath, resolvePath } from "../src/utils/paths.ts";
+import { symlinksSupported } from "./utilities.ts";
 
 let tempDir: string;
 
@@ -27,7 +28,7 @@ describe("canonicalizePath", () => {
 		expect(canonicalizePath(file)).toBe(realpathSync(file));
 	});
 
-	it("resolves symlinks to their targets", () => {
+	it.skipIf(!symlinksSupported())("resolves symlinks to their targets", () => {
 		const dir = createTempDir();
 		const target = join(dir, "target.txt");
 		const link = join(dir, "link.txt");
@@ -36,7 +37,7 @@ describe("canonicalizePath", () => {
 		expect(canonicalizePath(link)).toBe(realpathSync(target));
 	});
 
-	it("resolves directory symlinks", () => {
+	it.skipIf(!symlinksSupported())("resolves directory symlinks", () => {
 		const dir = createTempDir();
 		const targetDir = join(dir, "target-dir");
 		const linkDir = join(dir, "link-dir");
@@ -51,7 +52,7 @@ describe("canonicalizePath", () => {
 		expect(canonicalizePath(nonexistent)).toBe(nonexistent);
 	});
 
-	it("falls back to the raw path for a dangling symlink", () => {
+	it.skipIf(!symlinksSupported())("falls back to the raw path for a dangling symlink", () => {
 		const dir = createTempDir();
 		const target = join(dir, "target.txt");
 		const link = join(dir, "link.txt");

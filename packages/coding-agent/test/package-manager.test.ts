@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, type ProgressEvent, type ResolvedResource } from "../src/core/package-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { symlinksSupported } from "./utilities.ts";
 
 function normalizeForMatch(value: string): string {
 	return value.replace(/\\/g, "/");
@@ -182,7 +183,7 @@ Content`,
 			expect(result.prompts.some((r) => r.path === promptPath && !r.enabled)).toBe(true);
 		});
 
-		it("should resolve symlinked user and project resources once", async () => {
+		it.skipIf(!symlinksSupported())("should resolve symlinked user and project resources once", async () => {
 			const previousHome = process.env.HOME;
 			process.env.HOME = tempDir;
 

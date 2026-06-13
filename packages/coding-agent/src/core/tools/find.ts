@@ -2,6 +2,7 @@ import { createInterface } from "node:readline";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
+import { minimatch } from "minimatch";
 import path from "path";
 import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
@@ -224,23 +225,32 @@ export function createFindToolDefinition(
 						// Build fd arguments. --no-require-git makes fd apply hierarchical .gitignore
 						// semantics whether or not the search path is inside a git repository, without
 						// leaking sibling-directory rules the way --ignore-file (a global source) would.
-						const args: string[] = [
-							"--glob",
-							"--color=never",
-							"--hidden",
-							"--no-require-git",
-							"--max-results",
-							String(effectiveLimit),
-						];
+						const args: string[] = ["--glob", "--color=never", "--hidden", "--no-require-git"];
 
-						// fd --glob matches against the basename unless --full-path is set; in --full-path
-						// mode it matches against the absolute candidate path, so a path-containing
-						// pattern like 'src/**/*.spec.ts' needs a leading '**/' to match anything.
+						// fd's --full-path glob matches against the OS-native candidate path. On Windows
+						// that uses backslash separators, so a forward-slash pattern with internal
+						// segments (e.g. 'src/**/*.spec.ts') silently matches nothing — fd only applies
+						// --path-separator to its output, not to pattern matching. For path-containing
+						// patterns on Windows we therefore enumerate every entry with fd (forcing '/'
+						// output) and match the relative POSIX path in JS via minimatch below.
+						const jsPathMatch = process.platform === "win32" && pattern.includes("/");
 						let effectivePattern = pattern;
-						if (pattern.includes("/")) {
-							args.push("--full-path");
-							if (!pattern.startsWith("/") && !pattern.startsWith("**/") && pattern !== "**") {
-								effectivePattern = `**/${pattern}`;
+						if (jsPathMatch) {
+							args.push("--path-separator", "/");
+							// Enumerate all entries; minimatch filtering happens in the close handler.
+							// No --max-results here so filtering is not starved; the limit is applied
+							// after matching.
+							effectivePattern = "*";
+						} else {
+							args.push("--max-results", String(effectiveLimit));
+							// fd --glob matches against the basename unless --full-path is set; in
+							// --full-path mode it matches against the absolute candidate path, so a
+							// path-containing pattern like 'src/**/*.spec.ts' needs a leading '**/'.
+							if (pattern.includes("/")) {
+								args.push("--full-path");
+								if (!pattern.startsWith("/") && !pattern.startsWith("**/") && pattern !== "**") {
+									effectivePattern = `**/${pattern}`;
+								}
 							}
 						}
 						args.push("--", effectivePattern, searchPath);
@@ -312,8 +322,26 @@ export function createFindToolDefinition(
 								relativized.push(toPosixPath(relativePath));
 							}
 
-							const resultLimitReached = relativized.length >= effectiveLimit;
-							const rawOutput = relativized.join("\n");
+							// On Windows, fd enumerated every entry (see jsPathMatch above); apply the
+							// path-based glob here so matching is separator-correct, then enforce the
+							// result limit that fd's --max-results would otherwise have applied.
+							let matched = relativized;
+							if (jsPathMatch) {
+								matched = relativized.filter((p) => minimatch(p, pattern, { dot: true }));
+								if (matched.length === 0) {
+									settle(() =>
+										resolve({
+											content: [{ type: "text", text: "No files found matching pattern" }],
+											details: undefined,
+										}),
+									);
+									return;
+								}
+							}
+							const resultLimitReached = matched.length >= effectiveLimit;
+							if (resultLimitReached) matched = matched.slice(0, effectiveLimit);
+
+							const rawOutput = matched.join("\n");
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
 							let resultOutput = truncation.content;
 							const details: FindToolDetails = {};

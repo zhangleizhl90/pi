@@ -162,7 +162,8 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `shellPath` | string | - | Custom shell path (e.g., for Cygwin on Windows) |
+| `shellType` | `"auto"` \| `"bash"` \| `"powershell"` | `"auto"` | Shell flavor for the bash tool. `"auto"` is PowerShell-first on Windows (no Git Bash required) and bash on Unix. See [Windows Setup](windows.md). |
+| `shellPath` | string | - | Custom shell path (overrides `shellType`; flavor inferred from the binary name) |
 | `shellCommandPrefix` | string | - | Prefix for every bash command (e.g., `"shopt -s expand_aliases"`) |
 | `npmCommand` | string[] | - | Command argv used for npm package lookup/install operations (e.g., `["mise", "exec", "node@20", "--", "npm"]`) |
 

@@ -36,6 +36,7 @@ import {
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
+import { clearShellConfigCache, resolveShellKind } from "../utils/shell.ts";
 import { sleep } from "../utils/sleep.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
@@ -925,6 +926,7 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			promptGuidelines,
+			shellKind: resolveShellKind(this.settingsManager.getShellPath(), this.settingsManager.getShellType()),
 		};
 		return buildSystemPrompt(this._baseSystemPromptOptions);
 	}
@@ -2395,7 +2397,7 @@ export class AgentSession {
 				)
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					bash: { commandPrefix: shellCommandPrefix, shellPath, shellType: this.settingsManager.getShellType() },
 				});
 
 		this._baseToolDefinitions = new Map(
@@ -2437,6 +2439,7 @@ export class AgentSession {
 		await emitSessionShutdownEvent(this._extensionRunner, { type: "session_shutdown", reason: "reload" });
 		await this.settingsManager.reload();
 		this.syncQueueModesFromSettings();
+		clearShellConfigCache();
 		resetApiProviders();
 		await this._resourceLoader.reload();
 		this._buildRuntime({
@@ -2584,16 +2587,19 @@ export class AgentSession {
 	): Promise<BashResult> {
 		this._bashAbortController = new AbortController();
 
-		// Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support)
-		const prefix = this.settingsManager.getShellCommandPrefix();
+		// Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support).
+		// The prefix is bash syntax, so skip it when the resolved shell is PowerShell.
 		const shellPath = this.settingsManager.getShellPath();
+		const shellType = this.settingsManager.getShellType();
+		const prefix =
+			resolveShellKind(shellPath, shellType) === "bash" ? this.settingsManager.getShellCommandPrefix() : undefined;
 		const resolvedCommand = prefix ? `${prefix}\n${command}` : command;
 
 		try {
 			const result = await executeBashWithOperations(
 				resolvedCommand,
 				this.sessionManager.getCwd(),
-				options?.operations ?? createLocalBashOperations({ shellPath }),
+				options?.operations ?? createLocalBashOperations({ shellPath, shellType }),
 				{
 					onChunk,
 					signal: this._bashAbortController.signal,

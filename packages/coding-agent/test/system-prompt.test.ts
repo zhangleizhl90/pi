@@ -111,4 +111,43 @@ describe("buildSystemPrompt", () => {
 			expect(prompt.match(/- Use dynamic_tool for summaries\./g)).toHaveLength(1);
 		});
 	});
+
+	describe("shellKind", () => {
+		test("adds PowerShell syntax guidance when shellKind is powershell", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: ["read", "bash", "edit", "write"],
+				shellKind: "powershell",
+				contextFiles: [],
+				skills: [],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).toContain("The bash tool runs PowerShell");
+			expect(prompt).toContain("Write PowerShell syntax");
+		});
+
+		test("omits PowerShell guidance for bash shellKind", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: ["read", "bash", "edit", "write"],
+				shellKind: "bash",
+				contextFiles: [],
+				skills: [],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).not.toContain("runs PowerShell");
+		});
+
+		test("omits PowerShell guidance when bash tool is absent", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: ["read", "edit", "write"],
+				shellKind: "powershell",
+				contextFiles: [],
+				skills: [],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).not.toContain("runs PowerShell");
+		});
+	});
 });

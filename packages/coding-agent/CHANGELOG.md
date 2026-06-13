@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Native PowerShell support on Windows** - The `bash` tool now runs through PowerShell by default on Windows (PowerShell 7 `pwsh` preferred, Windows PowerShell 5.1 fallback), so Git Bash is no longer required. A new `shellType` setting (`"auto"` | `"bash"` | `"powershell"`, default `"auto"`) selects the shell flavor; `"auto"` is PowerShell-first on Windows and bash on Unix. When PowerShell is active, the tool description and system prompt instruct the model to use PowerShell syntax. `shellPath` still pins an explicit shell and infers the flavor from the binary name. See [Windows Setup](docs/windows.md).
+
 ## [0.79.2] - 2026-06-12
 
 ### New Features

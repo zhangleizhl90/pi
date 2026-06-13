@@ -3,6 +3,7 @@
  */
 
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
+import type { ShellKind } from "../utils/shell.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
 export interface BuildSystemPromptOptions {
@@ -18,6 +19,8 @@ export interface BuildSystemPromptOptions {
 	appendSystemPrompt?: string;
 	/** Working directory. */
 	cwd: string;
+	/** Active shell flavor for the bash tool. When "powershell", PowerShell syntax guidance is added. */
+	shellKind?: ShellKind;
 	/** Pre-loaded context files. */
 	contextFiles?: Array<{ path: string; content: string }>;
 	/** Pre-loaded skills. */
@@ -33,6 +36,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		promptGuidelines,
 		appendSystemPrompt,
 		cwd,
+		shellKind,
 		contextFiles: providedContextFiles,
 		skills: providedSkills,
 	} = options;
@@ -108,10 +112,22 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const hasFind = tools.includes("find");
 	const hasLs = tools.includes("ls");
 	const hasRead = tools.includes("read");
+	const isPowerShell = shellKind === "powershell";
+
+	// Shell flavor guidance. The bash tool runs PowerShell on Windows when configured.
+	if (hasBash && isPowerShell) {
+		addGuideline(
+			"The bash tool runs PowerShell on this system. Write PowerShell syntax, not bash: no '&&' or '||' (use ';' or separate calls, or 'if'); no '2>/dev/null'; use cmdlets and aliases (Get-ChildItem, Select-String, Where-Object, Test-Path). Quote paths with spaces.",
+		);
+	}
 
 	// File exploration guidelines
 	if (hasBash && !hasGrep && !hasFind && !hasLs) {
-		addGuideline("Use bash for file operations like ls, rg, find");
+		addGuideline(
+			isPowerShell
+				? "Use the bash tool (PowerShell) for file operations like Get-ChildItem, Select-String, Get-Content"
+				: "Use bash for file operations like ls, rg, find",
+		);
 	}
 
 	for (const guideline of promptGuidelines ?? []) {

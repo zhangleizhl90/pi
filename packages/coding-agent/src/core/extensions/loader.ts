@@ -84,7 +84,16 @@ function getAliases(): Record<string, string> {
 		if (fs.existsSync(workspacePath)) {
 			return workspacePath;
 		}
-		return fileURLToPath(import.meta.resolve(specifier));
+		// Prefer the installed package entry. `import.meta.resolve` is unavailable under
+		// some test runners (vitest's SSR shim lacks it), so use `require.resolve`, which
+		// works in Node, dev, and vitest. Fall back to the (possibly unbuilt) workspace
+		// path so alias construction never hard-crashes — the alias is only ever loaded
+		// if an extension actually imports the package.
+		try {
+			return require.resolve(specifier);
+		} catch {
+			return workspacePath;
+		}
 	};
 
 	const piCodingAgentEntry = packageIndex;

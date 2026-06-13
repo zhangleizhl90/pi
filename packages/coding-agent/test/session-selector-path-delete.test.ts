@@ -7,6 +7,7 @@ import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type { SessionInfo } from "../src/core/session-manager.ts";
 import { SessionSelectorComponent } from "../src/modes/interactive/components/session-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { symlinksSupported } from "./utilities.ts";
 
 type Deferred<T> = {
 	promise: Promise<T>;
@@ -246,43 +247,46 @@ describe("session selector path/delete interactions", () => {
 		await flushPromises();
 	});
 
-	it("threads sessions when parent and child paths use different symlink aliases", async () => {
-		const paths = createSymlinkedSessionPaths();
-		tempDirs.push(paths.baseDir);
+	it.skipIf(!symlinksSupported())(
+		"threads sessions when parent and child paths use different symlink aliases",
+		async () => {
+			const paths = createSymlinkedSessionPaths();
+			tempDirs.push(paths.baseDir);
 
-		const sessions = [
-			makeSession({
-				id: "parent",
-				path: paths.parentAliasB,
-				name: "Parent",
-				modified: new Date("2026-01-01T00:00:00.000Z"),
-			}),
-			makeSession({
-				id: "child",
-				path: paths.childAliasB,
-				parentSessionPath: paths.parentAliasA,
-				name: "Child",
-				modified: new Date("2025-12-31T00:00:00.000Z"),
-			}),
-		];
+			const sessions = [
+				makeSession({
+					id: "parent",
+					path: paths.parentAliasB,
+					name: "Parent",
+					modified: new Date("2026-01-01T00:00:00.000Z"),
+				}),
+				makeSession({
+					id: "child",
+					path: paths.childAliasB,
+					parentSessionPath: paths.parentAliasA,
+					name: "Child",
+					modified: new Date("2025-12-31T00:00:00.000Z"),
+				}),
+			];
 
-		const selector = new SessionSelectorComponent(
-			async () => sessions,
-			async () => [],
-			() => {},
-			() => {},
-			() => {},
-			() => {},
-			{ keybindings },
-		);
-		await flushPromises();
+			const selector = new SessionSelectorComponent(
+				async () => sessions,
+				async () => [],
+				() => {},
+				() => {},
+				() => {},
+				() => {},
+				{ keybindings },
+			);
+			await flushPromises();
 
-		const output = stripAnsi(selector.render(120).join("\n"));
-		expect(output).toContain("Parent");
-		expect(output).toContain("└─ Child");
-	});
+			const output = stripAnsi(selector.render(120).join("\n"));
+			expect(output).toContain("Parent");
+			expect(output).toContain("└─ Child");
+		},
+	);
 
-	it("treats the current session as active across symlink aliases", async () => {
+	it.skipIf(!symlinksSupported())("treats the current session as active across symlink aliases", async () => {
 		const paths = createSymlinkedSessionPaths();
 		tempDirs.push(paths.baseDir);
 

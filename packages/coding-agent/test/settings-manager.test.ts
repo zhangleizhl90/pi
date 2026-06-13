@@ -395,4 +395,31 @@ describe("SettingsManager", () => {
 			expect(manager.getSessionDir()).toBe(join(homedir(), "sessions"));
 		});
 	});
+
+	describe("shellType", () => {
+		it("defaults to auto when unset", () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getShellType()).toBe("auto");
+		});
+
+		it("reads a valid configured value", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ shellType: "powershell" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getShellType()).toBe("powershell");
+		});
+
+		it("coerces an invalid value back to auto", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ shellType: "fish" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getShellType()).toBe("auto");
+		});
+
+		it("persists a value via setShellType", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setShellType("bash");
+			await manager.flush();
+			const saved = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
+			expect(saved.shellType).toBe("bash");
+		});
+	});
 });

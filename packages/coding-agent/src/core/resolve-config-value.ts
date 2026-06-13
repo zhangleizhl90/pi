@@ -157,6 +157,9 @@ export function resolveConfigValue(config: string): string | undefined {
 
 function executeWithConfiguredShell(command: string): { executed: boolean; value: string | undefined } {
 	try {
+		// Config-value commands are bash-syntax snippets (e.g. `!cat ~/.secret`, `!echo $TOKEN`);
+		// keep the conservative bash default rather than the product "auto" (which would run them
+		// under PowerShell on Windows and silently mis-parse). This path has no SettingsManager access.
 		const { shell, args } = getShellConfig();
 		const result = spawnSync(shell, [...args, command], {
 			encoding: "utf-8",

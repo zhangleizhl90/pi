@@ -11,6 +11,7 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
+import { symlinksSupported } from "./utilities.ts";
 
 describe("DefaultResourceLoader", () => {
 	let tempDir: string;
@@ -157,7 +158,7 @@ Project skill`,
 			expect(theme?.sourcePath).toBe(projectThemePath);
 		});
 
-		it("should load symlinked user and project extensions once", async () => {
+		it.skipIf(!symlinksSupported())("should load symlinked user and project extensions once", async () => {
 			const sharedExtDir = join(tempDir, "shared-extensions");
 			mkdirSync(sharedExtDir, { recursive: true });
 			writeFileSync(

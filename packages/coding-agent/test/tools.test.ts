@@ -16,10 +16,12 @@ import {
 } from "../src/index.ts";
 import * as shellModule from "../src/utils/shell.ts";
 
+const isWindows = process.platform === "win32";
+
 const readTool = createReadTool(process.cwd());
 const writeTool = createWriteTool(process.cwd());
 const editTool = createEditTool(process.cwd());
-const bashTool = createBashTool(process.cwd());
+const bashTool = createBashTool(process.cwd(), { shellType: "bash" });
 const grepTool = createGrepTool(process.cwd());
 const findTool = createFindTool(process.cwd());
 const lsTool = createLsTool(process.cwd());
@@ -386,17 +388,18 @@ describe("Coding Agent Tools", () => {
 			expect(readFileSync(testFile, "utf-8")).toBe(originalContent);
 		});
 
-		it("should include EACCES for read-only files", async () => {
+		it("should surface a permission error code for read-only files", async () => {
 			const testFile = join(testDir, "edit-readonly.txt");
 			writeFileSync(testFile, "hello\n");
 			chmodSync(testFile, 0o444);
 
+			// POSIX reports EACCES; Windows reports EPERM for a read-only file.
 			await expect(
 				editTool.execute("test-call-14", {
 					path: testFile,
 					edits: [{ oldText: "hello", newText: "world" }],
 				}),
-			).rejects.toThrow(`Could not edit file: ${testFile}. Error code: EACCES.`);
+			).rejects.toThrow(/Could not edit file: .* Error code: (EACCES|EPERM)\./);
 		});
 
 		it("should include the original error message for unknown edit access errors", async () => {
@@ -425,7 +428,9 @@ describe("Coding Agent Tools", () => {
 			expect(result).toEqual({ error: `Could not edit file: ${missingFile}. Error code: ENOENT.` });
 		});
 
-		it("should include EACCES in diff preview for unreadable files", async () => {
+		// Windows cannot make a file unreadable to its owner via chmod, so this
+		// EACCES-on-read scenario only reproduces on POSIX.
+		it.skipIf(isWindows)("should include EACCES in diff preview for unreadable files", async () => {
 			const unreadableFile = join(testDir, "unreadable-preview.txt");
 			writeFileSync(unreadableFile, "hello\n");
 			chmodSync(unreadableFile, 0o222);
@@ -503,28 +508,22 @@ describe("Coding Agent Tools", () => {
 		});
 
 		it("should handle process spawn errors", async () => {
-			vi.spyOn(shellModule, "getShellConfig").mockReturnValueOnce({
+			// mockReturnValue (not Once): getShellConfig is consulted both at tool-build time
+			// (resolveShellKind, for the description) and at execution time.
+			const spy = vi.spyOn(shellModule, "getShellConfig").mockReturnValue({
 				shell: "/nonexistent-shell-path-xyz123",
 				args: ["-c"],
+				kind: "bash",
 			});
 
-			const bashWithBadShell = createBashTool(testDir);
+			const bashWithBadShell = createBashTool(testDir, { shellType: "bash" });
 
 			await expect(bashWithBadShell.execute("test-call-12", { command: "echo test" })).rejects.toThrow(/ENOENT/);
+			spy.mockRestore();
 		});
 
 		it("should pass shellPath through to shell resolution", async () => {
 			const getShellConfigSpy = vi.spyOn(shellModule, "getShellConfig");
-			const bashWithCustomShell = createBashTool(testDir, {
-				shellPath: "/custom/bash",
-				operations: {
-					exec: async () => ({ exitCode: 0 }),
-				},
-			});
-
-			await bashWithCustomShell.execute("test-call-12b", { command: "echo test" });
-
-			expect(getShellConfigSpy).not.toHaveBeenCalled();
 
 			const ops = createLocalBashOperations({ shellPath: "/custom/bash" });
 			await expect(
@@ -532,11 +531,14 @@ describe("Coding Agent Tools", () => {
 					onData: () => {},
 				}),
 			).rejects.toThrow("Custom shell path not found: /custom/bash");
-			expect(getShellConfigSpy).toHaveBeenCalledWith("/custom/bash");
+			// createLocalBashOperations threads shellPath through and defaults shellType to "auto".
+			expect(getShellConfigSpy).toHaveBeenCalledWith("/custom/bash", "auto");
+			getShellConfigSpy.mockRestore();
 		});
 
 		it("should prepend command prefix when configured", async () => {
 			const bashWithPrefix = createBashTool(testDir, {
+				shellType: "bash",
 				commandPrefix: "export TEST_VAR=hello",
 			});
 
@@ -546,6 +548,7 @@ describe("Coding Agent Tools", () => {
 
 		it("should include output from both prefix and command", async () => {
 			const bashWithPrefix = createBashTool(testDir, {
+				shellType: "bash",
 				commandPrefix: "echo prefix-output",
 			});
 
@@ -554,7 +557,7 @@ describe("Coding Agent Tools", () => {
 		});
 
 		it("should work without command prefix", async () => {
-			const bashWithoutPrefix = createBashTool(testDir, {});
+			const bashWithoutPrefix = createBashTool(testDir, { shellType: "bash" });
 
 			const result = await bashWithoutPrefix.execute("test-prefix-3", { command: "echo no-prefix" });
 			expect(getTextOutput(result).trim()).toBe("no-prefix");
@@ -619,7 +622,7 @@ describe("Coding Agent Tools", () => {
 		});
 
 		it("should expose local bash operations for extension reuse", async () => {
-			const ops = createLocalBashOperations();
+			const ops = createLocalBashOperations({ shellType: "bash" });
 			const chunks: Buffer[] = [];
 
 			const result = await ops.exec("echo $TEST_LOCAL_BASH_OPS", testDir, {
@@ -635,7 +638,7 @@ describe("Coding Agent Tools", () => {
 			const result = await executeBashWithOperations(
 				"printf '\\033[31mred\\033[0m\\r\\n'",
 				process.cwd(),
-				createLocalBashOperations(),
+				createLocalBashOperations({ shellType: "bash" }),
 			);
 
 			expect(result.exitCode).toBe(0);
@@ -643,7 +646,7 @@ describe("Coding Agent Tools", () => {
 		});
 
 		it("should persist full output when truncation happens by line count only", async () => {
-			const bash = createBashTool(testDir);
+			const bash = createBashTool(testDir, { shellType: "bash" });
 			const result = await bash.execute("test-call-line-truncation", { command: "seq 3000" });
 			const output = getTextOutput(result);
 			const fullOutputPath = result.details?.fullOutputPath;
@@ -666,7 +669,11 @@ describe("Coding Agent Tools", () => {
 		});
 
 		it("executeBash should persist full output when truncation happens by line count only", async () => {
-			const result = await executeBashWithOperations("seq 3000", process.cwd(), createLocalBashOperations());
+			const result = await executeBashWithOperations(
+				"seq 3000",
+				process.cwd(),
+				createLocalBashOperations({ shellType: "bash" }),
+			);
 			const fullOutputPath = result.fullOutputPath;
 
 			expect(result.truncated).toBe(true);
@@ -727,12 +734,24 @@ describe("Coding Agent Tools", () => {
 			chmodSync(payload, 0o755);
 			writeFileSync(testFile, "target\n");
 
-			const result = await grepTool.execute("test-call-grep-injection", {
-				pattern: `--pre=${payload}`,
-				path: testDir,
-			});
-
-			expect(getTextOutput(result)).toContain("No matches found");
+			// The security guarantee is that `--pre=` is never honored as a flag, so
+			// the payload never runs (marker absent). On POSIX the remaining text is a
+			// valid regex that matches nothing ("No matches found"); on Windows the
+			// payload path's backslashes form an invalid regex, so ripgrep exits with a
+			// parse error (the tool rejects). Both outcomes prove the flag was treated
+			// as search text rather than executed.
+			let output: string;
+			try {
+				output = getTextOutput(
+					await grepTool.execute("test-call-grep-injection", {
+						pattern: `--pre=${payload}`,
+						path: testDir,
+					}),
+				);
+			} catch (error) {
+				output = error instanceof Error ? error.message : String(error);
+			}
+			expect(output.includes("No matches found") || /regex parse error/i.test(output)).toBe(true);
 			expect(existsSync(marker)).toBe(false);
 		});
 	});

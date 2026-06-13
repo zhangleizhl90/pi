@@ -9,9 +9,13 @@ import { truncateToVisualLines } from "../../modes/interactive/components/visual
 import { theme } from "../../modes/interactive/theme/theme.ts";
 import { waitForChildProcess } from "../../utils/child-process.ts";
 import {
+	buildSpawnArgs,
 	getShellConfig,
 	getShellEnv,
 	killProcessTree,
+	resolveShellKind,
+	type ShellKind,
+	type ShellType,
 	trackDetachedChildPid,
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
@@ -27,6 +31,33 @@ const bashSchema = Type.Object({
 });
 
 export type BashToolInput = Static<typeof bashSchema>;
+
+/**
+ * Build the tool schema with a shell-flavor-appropriate command description.
+ * Same shape as `bashSchema`, so `BashToolInput` stays valid.
+ */
+function buildBashSchema(kind: ShellKind): typeof bashSchema {
+	const commandDescription = kind === "powershell" ? "PowerShell command to execute" : "Bash command to execute";
+	return Type.Object({
+		command: Type.String({ description: commandDescription }),
+		timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
+	});
+}
+
+/** Human-facing tool text derived from the active shell flavor. */
+function bashToolText(kind: ShellKind, maxLines: number, maxKb: number) {
+	const truncationNote = `Output is truncated to last ${maxLines} lines or ${maxKb}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`;
+	if (kind === "powershell") {
+		return {
+			description: `Execute a command via PowerShell in the current working directory. Returns stdout and stderr. Write PowerShell syntax (e.g. Get-ChildItem, Select-String, Where-Object; use ';' and 'if' instead of '&&'/'||'); bash syntax will not work. ${truncationNote}`,
+			promptSnippet: "Execute PowerShell commands (Get-ChildItem, Select-String, etc.)",
+		};
+	}
+	return {
+		description: `Execute a bash command in the current working directory. Returns stdout and stderr. ${truncationNote}`,
+		promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
+	};
+}
 
 export interface BashToolDetails {
 	truncation?: TruncationResult;
@@ -63,10 +94,12 @@ export interface BashOperations {
  * This is useful for extensions that intercept user_bash and still want pi's
  * standard local shell behavior while wrapping or rewriting commands.
  */
-export function createLocalBashOperations(options?: { shellPath?: string }): BashOperations {
+export function createLocalBashOperations(options?: { shellPath?: string; shellType?: ShellType }): BashOperations {
 	return {
 		exec: async (command, cwd, { onData, signal, timeout, env }) => {
-			const { shell, args } = getShellConfig(options?.shellPath);
+			const config = getShellConfig(options?.shellPath, options?.shellType ?? "auto");
+			const { shell } = config;
+			const spawnArgs = buildSpawnArgs(config, command);
 			try {
 				await fsAccess(cwd, constants.F_OK);
 			} catch {
@@ -76,7 +109,7 @@ export function createLocalBashOperations(options?: { shellPath?: string }): Bas
 				throw new Error("aborted");
 			}
 
-			const child = spawn(shell, [...args, command], {
+			const child = spawn(shell, spawnArgs, {
 				cwd,
 				detached: process.platform !== "win32",
 				env: env ?? getShellEnv(),
@@ -145,6 +178,8 @@ export interface BashToolOptions {
 	commandPrefix?: string;
 	/** Optional explicit shell path from settings */
 	shellPath?: string;
+	/** Shell flavor selection. Default: "auto" (PowerShell-first on Windows, bash on Unix). */
+	shellType?: ShellType;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
 }
@@ -270,15 +305,24 @@ export function createBashToolDefinition(
 	cwd: string,
 	options?: BashToolOptions,
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
-	const ops = options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath });
+	const ops =
+		options?.operations ??
+		createLocalBashOperations({ shellPath: options?.shellPath, shellType: options?.shellType });
 	const commandPrefix = options?.commandPrefix;
 	const spawnHook = options?.spawnHook;
+	// Resolve the active shell flavor (non-throwing) to pick model-facing text and to
+	// decide whether the bash-only command prefix applies. The registry name stays
+	// "bash" for stability; only descriptions vary. Honors shellType even with custom ops.
+	const kind = resolveShellKind(options?.shellPath, options?.shellType ?? "auto");
+	const text = bashToolText(kind, DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES / 1024);
+	// The command prefix (e.g. `shopt -s expand_aliases`) is bash syntax; never feed it to PowerShell.
+	const effectivePrefix = kind === "bash" ? commandPrefix : undefined;
 	return {
 		name: "bash",
 		label: "bash",
-		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
-		promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
-		parameters: bashSchema,
+		description: text.description,
+		promptSnippet: text.promptSnippet,
+		parameters: buildBashSchema(kind),
 		async execute(
 			_toolCallId,
 			{ command, timeout }: { command: string; timeout?: number },
@@ -286,7 +330,7 @@ export function createBashToolDefinition(
 			onUpdate?,
 			_ctx?,
 		) {
-			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
+			const resolvedCommand = effectivePrefix ? `${effectivePrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
 			const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
 			let updateTimer: NodeJS.Timeout | undefined;

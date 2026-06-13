@@ -2,7 +2,16 @@
  * Shared test utilities for coding-agent tests.
  */
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Agent } from "@earendil-works/pi-agent-core";
@@ -24,6 +33,30 @@ import { createCodingTools } from "../src/index.ts";
  * describe.skipIf(!API_KEY)
  */
 export const API_KEY = process.env.ANTHROPIC_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
+
+let _symlinksSupported: boolean | undefined;
+
+/**
+ * Whether the current process can create symlinks. On Windows this requires
+ * Developer Mode or elevated privileges; without them fs.symlinkSync throws
+ * EPERM. Symlink-dependent tests should be wrapped in `it.skipIf(!symlinksSupported())`
+ * so they run on POSIX and capable Windows/CI setups but skip cleanly otherwise.
+ */
+export function symlinksSupported(): boolean {
+	if (_symlinksSupported !== undefined) return _symlinksSupported;
+	const probeDir = mkdtempSync(join(tmpdir(), "pi-symlink-probe-"));
+	try {
+		const target = join(probeDir, "target");
+		writeFileSync(target, "");
+		symlinkSync(target, join(probeDir, "link"));
+		_symlinksSupported = true;
+	} catch {
+		_symlinksSupported = false;
+	} finally {
+		rmSync(probeDir, { recursive: true, force: true });
+	}
+	return _symlinksSupported;
+}
 
 // ============================================================================
 // OAuth API key resolution from ~/.pi/agent/auth.json

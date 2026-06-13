@@ -11,6 +11,7 @@ import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/inte
 import { formatDimensionNote, resizeImage } from "../../utils/image-resize.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import { formatPathRelativeToCwdOrAbsolute } from "../../utils/paths.ts";
+import { decodeTextBuffer } from "../../utils/text-encoding.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { resolveReadPathAsync, resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, renderToolPath, replaceTabs, str } from "./render-utils.ts";
@@ -273,9 +274,10 @@ export function createReadToolDefinition(
 									];
 								}
 							} else {
-								// Read text content.
+								// Read text content. Detect the encoding (BOM, then UTF-8, then GBK)
+								// so legacy Chinese/Windows files are not returned as mojibake.
 								const buffer = await ops.readFile(absolutePath);
-								const textContent = buffer.toString("utf-8");
+								const textContent = decodeTextBuffer(buffer);
 								const allLines = textContent.split("\n");
 								const totalFileLines = allLines.length;
 								// Apply offset if specified. Convert from 1-indexed input to 0-indexed array access.

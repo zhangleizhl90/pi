@@ -36,6 +36,15 @@ import type { PackageSource, SettingsManager } from "./settings-manager.ts";
 
 const NETWORK_TIMEOUT_MS = 10000;
 const UPDATE_CHECK_CONCURRENCY = 4;
+
+// Keep git network operations non-interactive so a missing/private repo fails fast
+// instead of blocking on a credential prompt. GIT_TERMINAL_PROMPT=0 disables the
+// terminal prompt; GCM_INTERACTIVE=never stops Windows' Git Credential Manager from
+// popping a GUI dialog (it still uses cached credentials for legitimate private repos).
+const GIT_NONINTERACTIVE_ENV: Record<string, string> = {
+	GIT_TERMINAL_PROMPT: "0",
+	GCM_INTERACTIVE: "never",
+};
 const GIT_UPDATE_CONCURRENCY = 4;
 
 function isOfflineModeEnabled(): boolean {
@@ -1586,9 +1595,7 @@ export class DefaultPackageManager implements PackageManager {
 		return this.runCommandCapture("git", args, {
 			cwd: installedPath,
 			timeoutMs: NETWORK_TIMEOUT_MS,
-			env: {
-				GIT_TERMINAL_PROMPT: "0",
-			},
+			env: GIT_NONINTERACTIVE_ENV,
 		});
 	}
 
@@ -1777,7 +1784,10 @@ export class DefaultPackageManager implements PackageManager {
 		}
 		mkdirSync(dirname(targetDir), { recursive: true });
 
-		await this.runCommand("git", ["clone", source.repo, targetDir]);
+		await this.runCommand("git", ["clone", source.repo, targetDir], {
+			env: GIT_NONINTERACTIVE_ENV,
+			timeoutMs: NETWORK_TIMEOUT_MS,
+		});
 		if (source.ref) {
 			await this.runCommand("git", ["checkout", source.ref], { cwd: targetDir });
 		}
@@ -2475,8 +2485,13 @@ export class DefaultPackageManager implements PackageManager {
 		};
 	}
 
-	private spawnCommand(command: string, args: string[], options?: { cwd?: string }): ChildProcess {
-		const env = getEnv();
+	private spawnCommand(
+		command: string,
+		args: string[],
+		options?: { cwd?: string; env?: Record<string, string> },
+	): ChildProcess {
+		const baseEnv = getEnv();
+		const env = options?.env ? { ...baseEnv, ...options.env } : baseEnv;
 		return spawnProcess(command, args, {
 			cwd: options?.cwd,
 			stdio: isStdoutTakenOver() ? ["ignore", 2, 2] : "inherit",
@@ -2542,11 +2557,31 @@ export class DefaultPackageManager implements PackageManager {
 		});
 	}
 
-	private runCommand(command: string, args: string[], options?: { cwd?: string }): Promise<void> {
+	private runCommand(
+		command: string,
+		args: string[],
+		options?: { cwd?: string; env?: Record<string, string>; timeoutMs?: number },
+	): Promise<void> {
 		return new Promise((resolvePromise, reject) => {
 			const child = this.spawnCommand(command, args, options);
-			child.on("error", reject);
+			let timedOut = false;
+			const timeout =
+				typeof options?.timeoutMs === "number"
+					? setTimeout(() => {
+							timedOut = true;
+							child.kill();
+						}, options.timeoutMs)
+					: undefined;
+			child.on("error", (error) => {
+				if (timeout) clearTimeout(timeout);
+				reject(error);
+			});
 			child.on("exit", (code) => {
+				if (timeout) clearTimeout(timeout);
+				if (timedOut) {
+					reject(new Error(`${command} ${args.join(" ")} timed out after ${options?.timeoutMs}ms`));
+					return;
+				}
 				if (code === 0) {
 					resolvePromise();
 				} else {

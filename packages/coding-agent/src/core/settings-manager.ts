@@ -5,6 +5,7 @@ import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
+import type { ShellType } from "../utils/shell.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 
 export interface CompactionSettings {
@@ -91,6 +92,7 @@ export interface Settings {
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows)
+	shellType?: ShellType; // Shell flavor: "auto" (default; PowerShell-first on Windows, bash on Unix), "bash", or "powershell"
 	quietStartup?: boolean;
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
@@ -846,6 +848,17 @@ export class SettingsManager {
 	setShellPath(path: string | undefined): void {
 		this.globalSettings.shellPath = path;
 		this.markModified("shellPath");
+		this.save();
+	}
+
+	getShellType(): ShellType {
+		const value = this.settings.shellType;
+		return value === "bash" || value === "powershell" ? value : "auto";
+	}
+
+	setShellType(shellType: ShellType | undefined): void {
+		this.globalSettings.shellType = shellType;
+		this.markModified("shellType");
 		this.save();
 	}
 
